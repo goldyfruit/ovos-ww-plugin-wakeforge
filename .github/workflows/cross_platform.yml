@@ -1,0 +1,84 @@
+name: Cross-platform
+
+# The same scores on every 64-bit CPU and OS the plugin targets (x86_64 and ARM64: Linux, Apple silicon, Windows,
+# Raspberry Pi), and what it costs there next to openWakeWord.
+# platform_check.py streams test/clips and test/golden through ovos-plugin-manager and compares every 80 ms score
+# with test/golden/streams.json, recorded on the AVX-512 VNNI machine the models were calibrated on.
+on:
+  push:
+  pull_request:
+    branches: [dev, master, main]
+  workflow_dispatch:
+
+jobs:
+  native:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}${{ matrix.ort && format(' · onnxruntime {0}', matrix.ort) || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, python: "3.10"}          # onnxruntime 1.23 (last for 3.10)
+          - {os: ubuntu-24.04, python: "3.11", ort: "1.20.1"}   # oldest onnxruntime the plugin allows
+          - {os: ubuntu-24.04, python: "3.13"}
+          - {os: ubuntu-24.04-arm, python: "3.11"}      # Raspberry Pi OS Bookworm's Python, aarch64
+          - {os: ubuntu-24.04-arm, python: "3.13"}
+          - {os: macos-15, python: "3.11"}              # Apple silicon
+          - {os: macos-15, python: "3.13"}
+          - {os: windows-2025, python: "3.11"}
+          - {os: windows-2025, python: "3.13"}
+          - {os: windows-11-arm, python: "3.12"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          python -m pip install . soundfile pytest onnx
+          if [ -n "${{ matrix.ort }}" ]; then python -m pip install "onnxruntime==${{ matrix.ort }}"; fi
+          python -m pip install --no-deps "openwakeword==0.6.0" && python -m pip install scipy scikit-learn tqdm requests || true
+          python -c "import onnxruntime, numpy, platform; print(platform.platform(), onnxruntime.__version__, numpy.__version__)"
+      - name: int8 kernels are exact
+        run: python -m pytest -q test/test_x64_int8_precision.py
+      - name: Golden stream and CPU
+        shell: bash
+        run: python scripts/platform_check.py check --bench --json "result-${{ matrix.os }}-${{ matrix.python }}${{ matrix.ort }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.os }}-${{ matrix.python }}${{ matrix.ort }}
+          path: result-*.json
+
+  # Raspberry Pi and Mycroft CPUs, emulated: QEMU_CPU makes onnxruntime pick the kernels those cores run (no dot
+  # product instructions on Armv8.0). Emulation gives no timing, only the scores.
+  raspberry-pi:
+    name: ${{ matrix.board }} (${{ matrix.cpu }}, emulated)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {board: "Raspberry Pi 3 / Zero 2 W / Mycroft Mark 1", cpu: cortex-a53}
+          - {board: "Raspberry Pi 4 / Mycroft Mark II", cpu: cortex-a72}
+          - {board: "Raspberry Pi 5", cpu: cortex-a76}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Golden stream on ${{ matrix.cpu }}
+        run: |
+          docker run --rm --platform linux/arm64 -e QEMU_CPU=${{ matrix.cpu }} -e OMP_NUM_THREADS=1 \
+            -v "$PWD":/w -w /w python:3.11-slim-bookworm bash -c '
+              grep -m1 -i features /proc/cpuinfo || true
+              pip install -q . soundfile pytest onnx &&
+              python -m pytest -q test/test_x64_int8_precision.py &&
+              python scripts/platform_check.py check --json result-${{ matrix.cpu }}.json'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.cpu }}
+          path: result-*.json
