@@ -42,7 +42,7 @@ jobs:
           python -m pip install --no-deps "openwakeword==0.6.0" && python -m pip install scipy scikit-learn tqdm requests || true
           python -c "import onnxruntime, numpy, platform; print(platform.platform(), onnxruntime.__version__, numpy.__version__)"
       - name: int8 kernels are exact
-        run: python -m pytest -q test/test_x64_int8_precision.py
+        run: python -m pytest -q test/test_x64_int8_precision.py test/test_non_ascii_paths.py
       - name: Golden stream and CPU
         shell: bash
         run: python scripts/platform_check.py check --bench --json "result-${{ matrix.os }}-${{ matrix.python }}${{ matrix.ort }}.json"
