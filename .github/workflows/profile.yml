@@ -1,0 +1,18 @@
+name: Profile
+# Where a wake word's CPU goes on each 64-bit CPU, and what onnxruntime options change it (scripts/profile_split.py).
+on: [workflow_dispatch, push]
+jobs:
+  profile:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-15, windows-11-arm, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install . soundfile
+      - run: python scripts/profile_split.py
