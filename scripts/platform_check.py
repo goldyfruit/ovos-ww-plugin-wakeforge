@@ -23,7 +23,9 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 import numpy as np
 import soundfile as sf
 
-ROOT = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parent
+# In the plugin repository the clips are in test/; in a copied device-check folder they sit beside this script.
+ROOT = HERE.parent if (HERE.parent / "test" / "clips").is_dir() else HERE
 SR, CHUNK = 16000, 1280
 MODELS = {
     "wakehubert_hey_jarvis": "wakehubert_hey_jarvis",   # a ready model of the plugin, by name
@@ -120,11 +122,20 @@ def bench_openwakeword(pcm, seconds=60.0):
             "wall_ms_per_s": round((time.perf_counter() - w0) / seconds * 1000, 2)}
 
 
+def peak_rss_mb():
+    try:
+        import resource
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return round(rss / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
+    except ImportError:                                # Windows
+        return None
+
+
 def info():
     import onnxruntime as ort
     return {"platform": platform.platform(), "machine": platform.machine(), "cpu": cpu_name(),
-            "python": platform.python_version(), "onnxruntime": ort.__version__, "numpy": np.__version__,
-            "qemu_cpu": os.environ.get("QEMU_CPU", "")}
+            "cores": os.cpu_count(), "python": platform.python_version(), "onnxruntime": ort.__version__,
+            "numpy": np.__version__, "qemu_cpu": os.environ.get("QEMU_CPU", "")}
 
 
 def main():
@@ -165,6 +176,7 @@ def main():
     if a.bench:
         res["openwakeword_hey_jarvis"] = bench_openwakeword(pcm)
         print("openWakeWord hey_jarvis (onnx)", res["openwakeword_hey_jarvis"])
+    res["info"]["peak_rss_mb"] = peak_rss_mb()
     print(json.dumps(res["info"]))
     if a.json:
         Path(a.json).write_text(json.dumps(res, indent=1) + "\n")
